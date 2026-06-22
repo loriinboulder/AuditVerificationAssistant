@@ -970,7 +970,6 @@ class RLAAuditHelperApp:
 
             locations = self._load_manifest_locations()
 
-            separator = "-" * 60
             ballot_location_lines = []
 
             for ab_n, filepath in to_print:
@@ -979,12 +978,11 @@ class RLAAuditHelperApp:
                     lines = f.readlines()
                 imprinted_ids = [ln.strip() for ln in lines[1:] if ln.strip()]
 
-                output_lines = [f"Audit Board {ab_n}", separator]
+                output_lines = [f"Audit Board {ab_n}"]
                 for iid in imprinted_ids:
                     output_lines.extend(
                         self._generate_ballot_output(iid, self._find_ballot(iid))
                     )
-                    output_lines.append(separator)
                     parts = iid.split("-")
                     loc = (
                         locations.get((parts[0], parts[1]), "")
@@ -995,7 +993,7 @@ class RLAAuditHelperApp:
 
                 out_path = os.path.join(folder, f"BallotContents_AuditBoard_{ab_n}.txt")
                 with open(out_path, "w", encoding="utf-8") as f:
-                    f.write("\n".join(output_lines))
+                    f.write("\n".join(output_lines) + "\n")
                 self.update_status(f"  Written: {os.path.basename(out_path)}")
 
             loc_path = os.path.join(folder, "BallotList_selectedBallots.txt")
@@ -1055,22 +1053,20 @@ class RLAAuditHelperApp:
 
             locations = self._load_manifest_locations()
 
-            separator = "-" * 60
             input_stem = os.path.splitext(os.path.basename(list_path))[0]
-            output_lines = [input_stem, separator]
+            output_lines = [input_stem]
             ballot_location_lines = []
             for iid in imprinted_ids:
                 output_lines.extend(
                     self._generate_ballot_output(iid, self._find_ballot(iid))
                 )
-                output_lines.append(separator)
                 parts = iid.split("-")
                 loc = locations.get((parts[0], parts[1]), "") if len(parts) == 3 else ""
                 ballot_location_lines.append(f"{iid}, {loc}")
 
             out_path = os.path.join(folder, f"BallotContents_{input_stem}.txt")
             with open(out_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(output_lines))
+                f.write("\n".join(output_lines) + "\n")
             self.update_status(f"Written: {os.path.basename(out_path)}")
 
             loc_path = os.path.join(folder, f"BallotList_{input_stem}.txt")
@@ -1221,20 +1217,27 @@ class RLAAuditHelperApp:
         return None
 
     def _format_contest_name(self, contest_name):
-        """Strip '(Vote For=1)' suffix; keep other suffixes."""
+        """Strip '(Vote For=1)', '(Statutory)', and '(Constitutional)' labels."""
         m = re.search(r"\s*\(Vote For=(\d+)\)\s*$", contest_name)
         if m and m.group(1) == "1":
-            return contest_name[: m.start()].strip()
+            contest_name = contest_name[: m.start()].strip()
+        contest_name = re.sub(
+            r"\s*\((?:statutory|constitutional)\)\s*",
+            " ",
+            contest_name,
+            flags=re.IGNORECASE,
+        ).strip()
         return contest_name
 
     def _generate_ballot_output(self, imprinted_id, ballot):
         """Return a list of text lines describing a single ballot."""
-        lines = [f"ImprintedId {imprinted_id}"]
+        iid_label = f" {imprinted_id} "
+
         if ballot is None:
-            lines.append("Missing")
-            return lines
+            return ["", iid_label.center(60, "-"), "Missing"]
 
         row3 = self.cvr_data["row3"]
+        entries = []
         for contest_name, start_col, end_col in self.contests:
             # Skip contests not on this ballot (all cells blank)
             if not any(
@@ -1252,10 +1255,14 @@ class RLAAuditHelperApp:
                 and col < len(row3)
                 and row3[col].strip()
             ]
-
             vote_str = ", ".join(selected) if selected else "NO VOTE"
-            combined = f"{display_name},{vote_str}"
-            lines.append(combined)
+            entries.append((display_name, vote_str))
+
+        width = max((len(name) for name, _ in entries), default=0)
+        total_width = min(width + 3 + max((len(v) for _, v in entries), default=0), 80)
+        lines = ["", iid_label.center(total_width, "-")]
+        for name, vote_str in entries:
+            lines.append(f"{name:>{width}} _ {vote_str}")
 
         return lines
 
