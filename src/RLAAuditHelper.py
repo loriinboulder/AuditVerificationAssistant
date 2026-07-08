@@ -1231,10 +1231,10 @@ class RLAAuditHelperApp:
 
     def _generate_ballot_output(self, imprinted_id, ballot):
         """Return a list of text lines describing a single ballot."""
-        iid_label = f" {imprinted_id} "
+        iid_label = f" ImprintedId {imprinted_id} "
 
         if ballot is None:
-            return ["", iid_label.center(60, "-"), "Missing"]
+            return ["", iid_label.center(80, "-"), "Missing"]
 
         row3 = self.cvr_data["row3"]
         entries = []
@@ -1259,10 +1259,9 @@ class RLAAuditHelperApp:
             entries.append((display_name, vote_str))
 
         width = max((len(name) for name, _ in entries), default=0)
-        total_width = min(width + 3 + max((len(v) for _, v in entries), default=0), 80)
-        lines = ["", iid_label.center(total_width, "-")]
+        lines = ["", iid_label.center(80, "-")]
         for name, vote_str in entries:
-            lines.append(f"{name:>{width}} _ {vote_str}")
+            lines.append(f"{name:>{width}} __ {vote_str}")
 
         return lines
 
