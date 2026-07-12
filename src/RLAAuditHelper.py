@@ -150,9 +150,9 @@ class RLAAuditHelperApp:
         self.cvr_filepath = None
         self.manifest_filepath = None
         self.contest_results_filepath = None
-        self.ballot_list_files = (
+        self.ballot_lists = (
             []
-        )  # list of (auditboard_n: int, filepath: str), sorted by n
+        )  # list of (auditboard_n: int, imprinted_ids: List[str]), sorted by n
 
         # Parsed CVR state (cached across menu options until input changes)
         self.cvr_data = None
@@ -282,7 +282,7 @@ class RLAAuditHelperApp:
             self.cvr_filepath = None
             self.manifest_filepath = None
             self.contest_results_filepath = None
-            self.ballot_list_files = []
+            self.ballot_lists = []
 
             if "CVRfile" in raw_contents:
                 self.cvr_filepath = os.path.join(
@@ -297,6 +297,7 @@ class RLAAuditHelperApp:
                     self.data_dir, raw_contents["contestresults"][0]
                 )
 
+            boards = {}
             for filename in raw_contents.get("ballotlist", []):
                 filepath = os.path.join(self.data_dir, filename)
                 if not os.path.exists(filepath):
@@ -304,19 +305,34 @@ class RLAAuditHelperApp:
                         "Error", f"Ballot list file not found: {filename}"
                     )
                     return
-                with open(filepath, "r", encoding="utf-8") as f:
-                    first_line = f.readline().strip()
-                m = re.match(r"^auditboard:(\d+)$", first_line)
-                if not m:
-                    messagebox.showerror(
-                        "Error",
-                        f"Ballot list file '{filename}': first line must be 'auditboard:n' "
-                        f"(found: '{first_line}')",
-                    )
-                    return
-                self.ballot_list_files.append((int(m.group(1)), filepath))
+                with open(filepath, "r", encoding="utf-8", newline="") as f:
+                    reader = csv.DictReader(f)
+                    if not reader.fieldnames or not {
+                        "imprinted_id",
+                        "audit_board",
+                    }.issubset(reader.fieldnames):
+                        messagebox.showerror(
+                            "Error",
+                            f"Ballot list file '{filename}' must have 'imprinted_id' "
+                            "and 'audit_board' columns.",
+                        )
+                        return
+                    for row in reader:
+                        iid = (row.get("imprinted_id") or "").strip()
+                        board_raw = (row.get("audit_board") or "").strip()
+                        if not iid or not board_raw:
+                            continue
+                        m = re.search(r"(\d+)\s*$", board_raw)
+                        if not m:
+                            messagebox.showerror(
+                                "Error",
+                                f"Ballot list file '{filename}': could not parse "
+                                f"audit board number from '{board_raw}'",
+                            )
+                            return
+                        boards.setdefault(int(m.group(1)), []).append(iid)
 
-            self.ballot_list_files.sort(key=lambda x: x[0])
+            self.ballot_lists = sorted(boards.items())
 
             # Reset cached CVR parse
             self.cvr_data = None
@@ -543,9 +559,9 @@ class RLAAuditHelperApp:
                 "Error", "No ballot manifest file was specified in CONTENTS."
             )
             return
-        if not self.ballot_list_files:
+        if not self.ballot_lists:
             messagebox.showerror(
-                "Error", "No ballot list files were specified in CONTENTS."
+                "Error", "No ballot list was specified in CONTENTS."
             )
             return
 
@@ -592,20 +608,17 @@ class RLAAuditHelperApp:
         self.status_text.config(state=tk.DISABLED)
 
         try:
-            # Collect all ImprintedIds from all ballot list files
-            self.update_status("Reading ballot list files...")
+            # Collect all ImprintedIds from all ballot lists
+            self.update_status("Reading ballot lists...")
             imprinted_ids = []
-            for ab_n, filepath in self.ballot_list_files:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                ids_in_file = [ln.strip() for ln in lines[1:] if ln.strip()]
+            for ab_n, ids_in_list in self.ballot_lists:
                 self.update_status(
-                    f"  Audit Board {ab_n}: {len(ids_in_file)} ballot(s)"
+                    f"  Audit Board {ab_n}: {len(ids_in_list)} ballot(s)"
                 )
-                imprinted_ids.extend(ids_in_file)
+                imprinted_ids.extend(ids_in_list)
 
             total = len(imprinted_ids)
-            self.update_status(f"Total ballots in ballot list files: {total}")
+            self.update_status(f"Total ballots in ballot lists: {total}")
 
             # Parse ImprintedIds -> (scanner, batch, position) integer tuples
             ballot_list_tuples = []
@@ -855,9 +868,9 @@ class RLAAuditHelperApp:
         if not self.cvr_filepath:
             messagebox.showerror("Error", "No CVR file was specified in CONTENTS.")
             return
-        if not self.ballot_list_files:
+        if not self.ballot_lists:
             messagebox.showerror(
-                "Error", "No ballot list files were specified in CONTENTS."
+                "Error", "No ballot list was specified in CONTENTS."
             )
             return
 
@@ -886,7 +899,7 @@ class RLAAuditHelperApp:
         tk.Radiobutton(
             ab_frame, text="All Audit Boards", variable=self.ab_var, value="all"
         ).pack(anchor=tk.W)
-        for ab_n, _ in self.ballot_list_files:
+        for ab_n, _ in self.ballot_lists:
             tk.Radiobutton(
                 ab_frame,
                 text=f"Audit Board #{ab_n}",
@@ -950,10 +963,10 @@ class RLAAuditHelperApp:
 
         selection = self.ab_var.get()
         if selection == "all":
-            to_print = self.ballot_list_files
+            to_print = self.ballot_lists
         else:
             ab_n = int(selection)
-            to_print = [(n, p) for n, p in self.ballot_list_files if n == ab_n]
+            to_print = [(n, ids) for n, ids in self.ballot_lists if n == ab_n]
 
         self.status_text.config(state=tk.NORMAL)
         self.status_text.delete(1.0, tk.END)
@@ -968,38 +981,19 @@ class RLAAuditHelperApp:
                 f"{len(self.contests)} contest(s)."
             )
 
-            locations = self._load_manifest_locations()
-
-            ballot_location_lines = []
-
-            for ab_n, filepath in to_print:
+            for ab_n, imprinted_ids in to_print:
                 self.update_status(f"Processing Audit Board {ab_n}...")
-                with open(filepath, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                imprinted_ids = [ln.strip() for ln in lines[1:] if ln.strip()]
 
                 output_lines = [f"Audit Board {ab_n}"]
                 for iid in imprinted_ids:
                     output_lines.extend(
                         self._generate_ballot_output(iid, self._find_ballot(iid))
                     )
-                    parts = iid.split("-")
-                    loc = (
-                        locations.get((parts[0], parts[1]), "")
-                        if len(parts) == 3
-                        else ""
-                    )
-                    ballot_location_lines.append(f"{iid}, {loc}")
 
                 out_path = os.path.join(folder, f"BallotContents_AuditBoard_{ab_n}.txt")
                 with open(out_path, "w", encoding="utf-8") as f:
                     f.write("\n".join(output_lines) + "\n")
                 self.update_status(f"  Written: {os.path.basename(out_path)}")
-
-            loc_path = os.path.join(folder, "BallotList_selectedBallots.txt")
-            with open(loc_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(ballot_location_lines))
-            self.update_status(f"  Written: BallotList_selectedBallots.txt")
 
             self.update_status("Done.")
             messagebox.showinfo("Success", f"Ballot contents written to:\n{folder}")
