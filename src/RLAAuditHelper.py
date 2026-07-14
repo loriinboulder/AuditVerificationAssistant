@@ -1210,8 +1210,24 @@ class RLAAuditHelperApp:
                 return ballot
         return None
 
+    _CONTEST_NAME_SHORTENINGS = [
+        (
+            re.compile(r"^Representative to the \d+\w+ United States Congress - District (\d+)(.*)$"),
+            r"US Rep - CD\1\2",
+        ),
+        (
+            re.compile(r"^Regent of the University of Colorado - Congressional District (\d+)(.*)$"),
+            r"CU Regent - CD\1\2",
+        ),
+        (
+            re.compile(r"^State Board of Education Member - Congressional District (\d+)(.*)$"),
+            r"State BOE - CD\1\2",
+        ),
+    ]
+
     def _format_contest_name(self, contest_name):
-        """Strip '(Vote For=1)', '(Statutory)', and '(Constitutional)' labels."""
+        """Strip '(Vote For=1)', '(Statutory)', and '(Constitutional)' labels,
+        and shorten a few long, formulaic contest names for compact printing."""
         m = re.search(r"\s*\(Vote For=(\d+)\)\s*$", contest_name)
         if m and m.group(1) == "1":
             contest_name = contest_name[: m.start()].strip()
@@ -1221,6 +1237,8 @@ class RLAAuditHelperApp:
             contest_name,
             flags=re.IGNORECASE,
         ).strip()
+        for pattern, replacement in self._CONTEST_NAME_SHORTENINGS:
+            contest_name = pattern.sub(replacement, contest_name)
         return contest_name
 
     def _generate_ballot_output(self, imprinted_id, ballot):
